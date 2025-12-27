@@ -1,0 +1,536 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Tarot AR - Faster Scroll</title>
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #050505; font-family: 'Times New Roman', serif; color: #fff; }
+        
+        #input-video { 
+            position: fixed; top: 0; left: 0; 
+            width: 100%; height: 100%; object-fit: cover;
+            opacity: 0; z-index: -10; pointer-events: none; 
+        } 
+        
+        #canvas-container { width: 100vw; height: 100vh; position: absolute; top: 0; left: 0; z-index: 1; }
+        #ui-layer { position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 2; pointer-events: none; }
+        
+        #guide-text {
+            position: absolute; width: 100%; text-align: center;
+            color: #fff; letter-spacing: 3px; font-weight: normal;
+            text-shadow: 0 0 10px rgba(255, 255, 255, 0.5); pointer-events: none;
+            transition: opacity 0.5s; text-transform: uppercase;
+            font-size: 0.6rem; bottom: 2%; 
+        }
+
+        #counter {
+            position: absolute; top: 30px; right: 40px;
+            font-size: 1.2rem; color: #fff; font-weight: bold;
+            border: 1px solid rgba(255, 255, 255, 0.5); padding: 5px 15px; border-radius: 30px;
+            background: rgba(0, 0, 0, 0.3); backdrop-filter: blur(5px);
+        }
+
+        #credit-text {
+            position: absolute; 
+            color: rgba(255, 255, 255, 0.6); font-family: sans-serif; font-size: 0.8rem;
+            pointer-events: none; z-index: 5; letter-spacing: 1px;
+            text-shadow: 0 0 5px rgba(0,0,0,0.5);
+            bottom: 10px; right: 5px;
+        }
+
+        #loading {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            background: #000; z-index: 10; display: flex; flex-direction: column;
+            justify-content: center; align-items: center; text-align: center;
+            transition: opacity 1.5s ease-out; pointer-events: auto;
+        }
+        .loader-content { opacity: 0.8; animation: pulse 2s infinite; }
+        @keyframes pulse { 0% { opacity: 0.5; } 50% { opacity: 1; } 100% { opacity: 0.5; } }
+
+        #virtual-cursor {
+            position: absolute; width: 30px; height: 30px;
+            border: 2px solid rgba(255, 255, 255, 0.9); border-radius: 50%;
+            transform: translate(-50%, -50%); pointer-events: none;
+            z-index: 100; display: none; transition: transform 0.1s;
+            box-shadow: 0 0 10px rgba(255,255,255,0.6);
+        }
+        #virtual-cursor.pinching { 
+            background: #fff; width: 15px; height: 15px; border: none; 
+            box-shadow: 0 0 20px #fff, 0 0 40px #fff; 
+            transform: translate(-50%, -50%) scale(1.2);
+        }
+        
+        #result-modal {
+            position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+            width: 80%; max-width: 900px; max-height: 80vh; overflow-y: auto;
+            background: rgba(10, 10, 10, 0.95); border: 1px solid #fff; 
+            padding: 50px; display: none; pointer-events: auto; 
+            box-shadow: 0 0 100px rgba(255,255,255,0.1); border-radius: 4px; z-index: 20;
+        }
+        #result-modal::-webkit-scrollbar { width: 6px; }
+        
+        #result-modal h2 { 
+            color: #fff; text-align: center; border-bottom: 1px solid #333; 
+            padding-bottom: 20px; margin-top: 0; text-transform: uppercase; 
+            letter-spacing: 4px; font-weight: normal; font-size: 1.8rem;
+        }
+        
+        .reading-section { margin-bottom: 40px; border-bottom: 1px solid #222; padding-bottom: 20px; animation: fadeIn 1.5s ease-out; }
+        .reading-label { color: #888; font-size: 0.7rem; letter-spacing: 2px; text-transform: uppercase; margin-bottom: 15px; display: block;}
+        .reading-body { display: flex; gap: 30px; align-items: start; }
+        .reading-img { width: 100px; border-radius: 4px; filter: grayscale(0.2); transition: filter 0.5s; }
+        .reading-img:hover { filter: grayscale(0); }
+        .reading-content h3 { margin: 0 0 10px 0; color: #fff; font-size: 1.5rem; font-weight: normal; }
+        .reading-desc { color: #ccc; line-height: 1.6; font-size: 1rem; text-align: justify; font-weight: 300; }
+        
+        button.restart-btn { 
+            display: block; margin: 40px auto 0; padding: 15px 50px; 
+            background: transparent; border: 1px solid #fff; color: #fff; 
+            cursor: pointer; font-family: serif; letter-spacing: 3px; text-transform: uppercase;
+            font-size: 0.9rem; transition: all 0.5s; 
+        }
+        button.restart-btn:hover { background: #fff; color: #000; box-shadow: 0 0 20px #fff; }
+
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } }
+    </style>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/tween.js/18.6.4/tween.umd.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils/control_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+</head>
+<body>
+    <video id="input-video" playsinline autoplay muted></video>
+    <div id="canvas-container"></div>
+    <div id="virtual-cursor"></div>
+    
+    <div id="ui-layer">
+        <div id="counter">0 / 3</div>
+        <div id="guide-text">Đưa tay lên trước Camera để bắt đầu</div>
+        <div id="credit-text">tiktok: binnanee</div>
+        
+        <div id="result-modal">
+            <h2>Lời Tiên Tri</h2>
+            <div id="final-reading"></div>
+            <button class="restart-btn" onclick="location.reload()">Trải Bài Mới</button>
+        </div>
+    </div>
+
+    <div id="loading">
+        <div class="loader-content">
+            <div style="font-size: 2rem; color: #fff;">✦</div>
+            <div style="font-size: 0.8rem; color: #888; letter-spacing: 4px; margin-top: 10px;">LOADING...</div>
+        </div>
+    </div>
+
+    <script>
+        // --- DATA ---
+        const TAROT_DATA = [
+            { name: "The Fool", url: "https://upload.wikimedia.org/wikipedia/commons/9/90/RWS_Tarot_00_Fool.jpg", meaning: "Khởi đầu mới, tự phát." },
+            { name: "The Magician", url: "https://upload.wikimedia.org/wikipedia/commons/d/de/RWS_Tarot_01_Magician.jpg", meaning: "Kỹ năng, hành động." },
+            { name: "The High Priestess", url: "https://upload.wikimedia.org/wikipedia/commons/8/88/RWS_Tarot_02_High_Priestess.jpg", meaning: "Trực giác, bí ẩn." },
+            { name: "The Empress", url: "https://upload.wikimedia.org/wikipedia/commons/d/d2/RWS_Tarot_03_Empress.jpg", meaning: "Trù phú, sáng tạo." },
+            { name: "The Emperor", url: "https://upload.wikimedia.org/wikipedia/commons/c/c3/RWS_Tarot_04_Emperor.jpg", meaning: "Quyền lực, cấu trúc." },
+            { name: "The Lovers", url: "https://upload.wikimedia.org/wikipedia/commons/3/3a/RWS_Tarot_06_Lovers.jpg", meaning: "Tình yêu, lựa chọn." },
+            { name: "The Chariot", url: "https://upload.wikimedia.org/wikipedia/commons/9/9b/RWS_Tarot_07_Chariot.jpg", meaning: "Ý chí, chiến thắng." },
+            { name: "The Hermit", url: "https://upload.wikimedia.org/wikipedia/commons/4/4d/RWS_Tarot_09_Hermit.jpg", meaning: "Suy ngẫm, cô độc." },
+            { name: "Wheel of Fortune", url: "https://upload.wikimedia.org/wikipedia/commons/3/3c/RWS_Tarot_10_Wheel_of_Fortune.jpg", meaning: "Vận may, thay đổi." },
+            { name: "Death", url: "https://upload.wikimedia.org/wikipedia/commons/d/d7/RWS_Tarot_13_Death.jpg", meaning: "Kết thúc, tái sinh." },
+            { name: "The Devil", url: "https://upload.wikimedia.org/wikipedia/commons/5/55/RWS_Tarot_15_Devil.jpg", meaning: "Cám dỗ, trói buộc." },
+            { name: "The Tower", url: "https://upload.wikimedia.org/wikipedia/commons/5/53/RWS_Tarot_16_Tower.jpg", meaning: "Sụp đổ đột ngột." },
+            { name: "The Star", url: "https://upload.wikimedia.org/wikipedia/commons/d/db/RWS_Tarot_17_Star.jpg", meaning: "Hy vọng, niềm tin." },
+            { name: "The Moon", url: "https://upload.wikimedia.org/wikipedia/commons/7/7f/RWS_Tarot_18_Moon.jpg", meaning: "Ảo tưởng, sợ hãi." },
+            { name: "The Sun", url: "https://upload.wikimedia.org/wikipedia/commons/1/17/RWS_Tarot_19_Sun.jpg", meaning: "Thành công, niềm vui." },
+            { name: "The World", url: "https://upload.wikimedia.org/wikipedia/commons/f/ff/RWS_Tarot_21_World.jpg", meaning: "Hoàn thành, trọn vẹn." }
+        ];
+
+        // --- CẤU HÌNH FINAL ---
+        const CONFIG = {
+            cardCount: TAROT_DATA.length, 
+            radius: 5.5, 
+            cardWidth: 1.4, cardHeight: 2.4, 
+            inspectPos: { x: 0, y: 0, z: 3.8 }, 
+            inspectScale: 0.5,    
+            storageScale: 0.09,   
+            storageZ: 3.5, 
+            storeMarginX: 0.1,    
+            storeMarginTop: 1.1,  
+            storeGapY: 0.25       
+        };
+
+        let scene, camera, renderer, cardGroup, textureLoader;
+        let raycaster, mouse;
+        let starFieldMesh;
+        let explosions = [];
+        let storedCards = [];
+        let inspectingCard = null;
+        let isGameActive = true;
+        let particleTexture;
+
+        let handX = 0.5; 
+        let isPinching = false;
+        let cursorPosition = { x: 0, y: 0 };
+        let rotationSpeed = 0.002;
+
+        function shuffleArray(array) {
+            for (let i = array.length - 1; i > 0; i--) {
+                const j = Math.floor(Math.random() * (i + 1));
+                [array[i], array[j]] = [array[j], array[i]];
+            }
+        }
+
+        // --- TẠO HẠT MÀU TRẮNG ---
+        function generateParticleTexture() {
+            const canvas = document.createElement('canvas');
+            canvas.width = 64; canvas.height = 64;
+            const ctx = canvas.getContext('2d');
+            
+            const grad = ctx.createRadialGradient(32, 32, 0, 32, 32, 32);
+            grad.addColorStop(0, 'rgba(255, 255, 255, 1)');      // Trắng
+            grad.addColorStop(0.4, 'rgba(255, 255, 255, 0.5)'); 
+            grad.addColorStop(1, 'rgba(255, 255, 255, 0)');     
+            
+            ctx.fillStyle = grad;
+            ctx.fillRect(0, 0, 64, 64);
+            
+            const tex = new THREE.Texture(canvas);
+            tex.needsUpdate = true;
+            return tex;
+        }
+
+        function init() {
+            const container = document.getElementById('canvas-container');
+            scene = new THREE.Scene();
+            scene.fog = new THREE.FogExp2(0x050505, 0.02);
+            
+            camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 100);
+            camera.position.set(0, 0, 5);
+            
+            renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+            renderer.toneMapping = THREE.ACESFilmicToneMapping;
+            container.appendChild(renderer.domElement);
+
+            const ambient = new THREE.AmbientLight(0xffffff, 0.6); 
+            scene.add(ambient);
+            const spotLight = new THREE.SpotLight(0xffffff, 2.0); 
+            spotLight.position.set(0, 10, 10); 
+            scene.add(spotLight);
+
+            textureLoader = new THREE.TextureLoader();
+            particleTexture = generateParticleTexture(); 
+            
+            shuffleArray(TAROT_DATA);
+            createCards();
+            createBackgroundStars();
+
+            raycaster = new THREE.Raycaster();
+            mouse = new THREE.Vector2();
+            document.addEventListener('mousedown', onMouseDown);
+            window.addEventListener('resize', onResize);
+            
+            setTimeout(() => {
+                document.getElementById('loading').style.opacity = 0;
+                setTimeout(()=>document.getElementById('loading').style.display='none', 1500);
+            }, 2000);
+        }
+
+        function createBackgroundStars() {
+            const starCount = 800;
+            const geo = new THREE.BufferGeometry();
+            const positions = [];
+            const sizes = [];
+            for(let i=0; i<starCount; i++) {
+                positions.push((Math.random()-0.5)*60, (Math.random()-0.5)*40, (Math.random()-0.5)*50 - 10);
+                sizes.push(Math.random() * 0.5 + 0.1);
+            }
+            geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+            geo.setAttribute('size', new THREE.Float32BufferAttribute(sizes, 1));
+            const sprite = textureLoader.load('sparkle.png', undefined, undefined, (err) => {});
+            const mat = new THREE.PointsMaterial({
+                size: 0.8, map: sprite, transparent: true, opacity: 0.9,
+                depthWrite: false, blending: THREE.AdditiveBlending, color: 0xffffff
+            });
+            starFieldMesh = new THREE.Points(geo, mat);
+            scene.add(starFieldMesh);
+        }
+
+        function createCards() {
+            cardGroup = new THREE.Group();
+            scene.add(cardGroup);
+            const geo = new THREE.BoxGeometry(CONFIG.cardWidth, CONFIG.cardHeight, 0.02);
+            const backTex = textureLoader.load('back.png', undefined, undefined, (err) => {});
+            const matEdge = new THREE.MeshStandardMaterial({ color: 0xd4af37, metalness: 0.8, roughness: 0.2 }); 
+
+            TAROT_DATA.forEach((data, i) => {
+                const frontTex = textureLoader.load(data.url);
+                const matFront = new THREE.MeshStandardMaterial({ map: frontTex });
+                const matBack = new THREE.MeshStandardMaterial({ map: backTex, color: 0xffffff });
+                const materials = [matEdge, matEdge, matEdge, matEdge, matBack, matFront];
+                const card = new THREE.Mesh(geo, materials);
+                
+                const angle = (i / CONFIG.cardCount) * Math.PI * 2;
+                card.position.set(Math.sin(angle) * CONFIG.radius, 0, Math.cos(angle) * CONFIG.radius);
+                card.lookAt(0, 0, 0);
+                card.userData = { id: i, data: data, isPicked: false };
+                cardGroup.add(card);
+            });
+        }
+
+        // --- HIỆU ỨNG NỔ HẠT (Bé, Chậm, Trắng) ---
+        function createExplosion(position) {
+            const particleCount = 150;
+            const geo = new THREE.BufferGeometry();
+            const positions = [];
+            const velocities = [];
+            const sizes = [];
+
+            for (let i = 0; i < particleCount; i++) {
+                positions.push(position.x, position.y, position.z); 
+                const theta = Math.random() * Math.PI * 2;
+                const phi = Math.acos(2 * Math.random() - 1);
+                
+                const speed = Math.random() * 0.03 + 0.01; 
+
+                velocities.push(
+                    speed * Math.sin(phi) * Math.cos(theta),
+                    speed * Math.sin(phi) * Math.sin(theta),
+                    speed * Math.cos(phi)
+                );
+                
+                sizes.push(Math.random() * 0.15 + 0.05); 
+            }
+
+            geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+            geo.setAttribute('size', new THREE.Float32BufferAttribute(sizes, 1));
+
+            const mat = new THREE.PointsMaterial({
+                size: 0.2,
+                map: particleTexture, 
+                transparent: true, 
+                opacity: 0.9,
+                depthWrite: false, 
+                blending: THREE.AdditiveBlending, 
+                color: 0xffffff 
+            });
+
+            const points = new THREE.Points(geo, mat);
+            scene.add(points);
+            explosions.push({ mesh: points, velocities: velocities, age: 0 });
+        }
+
+        function updateExplosions() {
+            for (let i = explosions.length - 1; i >= 0; i--) {
+                const ex = explosions[i];
+                const positions = ex.mesh.geometry.attributes.position.array;
+                ex.age += 1;
+                for (let j = 0; j < ex.velocities.length / 3; j++) {
+                    positions[j*3] += ex.velocities[j*3];
+                    positions[j*3+1] += ex.velocities[j*3+1];
+                    positions[j*3+2] += ex.velocities[j*3+2];
+                }
+                ex.mesh.geometry.attributes.position.needsUpdate = true;
+                ex.mesh.material.opacity = 1 - (ex.age / 60); 
+                ex.mesh.scale.setScalar(1 + ex.age * 0.01); 
+                if (ex.age > 60) {
+                    scene.remove(ex.mesh);
+                    ex.mesh.geometry.dispose();
+                    explosions.splice(i, 1);
+                }
+            }
+        }
+
+        function updateCounter() {
+            document.getElementById('counter').innerText = `${storedCards.length} / 3`;
+            if (storedCards.length === 3) {
+                document.getElementById('guide-text').innerText = "Định mệnh đã an bài...";
+                setTimeout(revealReading, 2000);
+            }
+        }
+
+        function pickCard(card) {
+            if (inspectingCard || storedCards.length >= 3 || card.userData.isPicked) return;
+            card.userData.isPicked = true; inspectingCard = card;
+            scene.attach(card);
+
+            new TWEEN.Tween(card.position).to(CONFIG.inspectPos, 1000).easing(TWEEN.Easing.Cubic.Out).start();
+            new TWEEN.Tween(card.rotation).to({ x: 0, y: Math.PI, z: 0 }, 1000).easing(TWEEN.Easing.Back.Out).start();
+            
+            const targetScale = CONFIG.inspectScale;
+            new TWEEN.Tween(card.scale).to({ x: targetScale, y: targetScale, z: targetScale }, 1000)
+                .onComplete(() => { 
+                    setTimeout(() => {
+                        createExplosion(card.position);
+                        setTimeout(storeCard, 100); 
+                    }, 1500); 
+                }).start();
+        }
+
+        function getSafeVerticalLeftPosition(index) {
+            const dist = camera.position.z - CONFIG.storageZ;
+            const vFOV = THREE.MathUtils.degToRad(camera.fov);
+            const visibleHeight = 2 * Math.tan(vFOV / 2) * dist;
+            const visibleWidth = visibleHeight * camera.aspect;
+
+            const leftEdge = -visibleWidth / 2;
+            const topEdge = visibleHeight / 2;
+
+            const x = leftEdge + CONFIG.storeMarginX;
+            const y = topEdge - CONFIG.storeMarginTop - (index * CONFIG.storeGapY);
+
+            return { x, y, z: CONFIG.storageZ };
+        }
+
+        function storeCard() {
+            if (!inspectingCard) return;
+            const card = inspectingCard; storedCards.push(card); inspectingCard = null;
+            const index = storedCards.length - 1;
+
+            const pos = getSafeVerticalLeftPosition(index);
+            const scale = CONFIG.storageScale;
+
+            new TWEEN.Tween(card.position).to({ x: pos.x, y: pos.y, z: pos.z }, 800).easing(TWEEN.Easing.Exponential.Out).start();
+            new TWEEN.Tween(card.scale).to({ x: scale, y: scale, z: scale }, 800).start();
+                
+            updateCounter();
+            repositionStoredCards(); 
+        }
+
+        function repositionStoredCards() {
+            const scale = CONFIG.storageScale;
+            storedCards.forEach((c, i) => {
+                const pos = getSafeVerticalLeftPosition(i);
+                new TWEEN.Tween(c.position).to({ x: pos.x, y: pos.y, z: pos.z }, 500).start();
+                new TWEEN.Tween(c.scale).to({ x: scale, y: scale, z: scale }, 500).start();
+            });
+        }
+
+        function revealReading() {
+            isGameActive = false;
+            document.getElementById('ui-layer').style.pointerEvents = "auto";
+            document.getElementById('guide-text').style.opacity = 0;
+            document.getElementById('virtual-cursor').style.display = 'none';
+            const content = document.getElementById('final-reading');
+            const contexts = ["QUÁ KHỨ", "HIỆN TẠI", "TƯƠNG LAI"];
+            let html = "";
+            storedCards.forEach((c, i) => {
+                const data = c.userData.data;
+                html += `
+                <div class="reading-section">
+                    <span class="reading-label">✦ ${contexts[i]}</span>
+                    <div class="reading-body">
+                        <img src="${data.url}" class="reading-img">
+                        <div class="reading-content">
+                            <h3>${data.name}</h3>
+                            <div class="reading-desc">${data.meaning}</div>
+                        </div>
+                    </div>
+                </div>`;
+            });
+            content.innerHTML = html;
+            document.getElementById('result-modal').style.display = 'block';
+        }
+
+        function onMouseDown(event) {
+            if (!isGameActive || storedCards.length >= 3) return;
+            mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+            mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+            raycaster.setFromCamera(mouse, camera);
+            const intersects = raycaster.intersectObjects(cardGroup.children);
+            if (intersects.length > 0) pickCard(intersects[0].object);
+        }
+
+        function onResults(results) {
+            const cursor = document.getElementById('virtual-cursor');
+            const guide = document.getElementById('guide-text');
+
+            if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+                const lm = results.multiHandLandmarks[0];
+                if(storedCards.length === 0) guide.innerText = "Chụm ngón cái và trỏ để chọn";
+                handX = 1 - lm[9].x; 
+                const x = (lm[8].x + lm[4].x) / 2;
+                const y = (lm[8].y + lm[4].y) / 2;
+                const screenX = (1 - x) * window.innerWidth;
+                const screenY = y * window.innerHeight;
+                
+                cursor.style.display = 'block'; 
+                cursor.style.left = `${screenX}px`; 
+                cursor.style.top = `${screenY}px`;
+                
+                cursorPosition.x = (screenX / window.innerWidth) * 2 - 1;
+                cursorPosition.y = -(screenY / window.innerHeight) * 2 + 1;
+
+                const distance = Math.hypot(lm[8].x - lm[4].x, lm[8].y - lm[4].y);
+                const isPinchingNow = distance < 0.08; 
+
+                if (isPinchingNow && !isPinching) {
+                    cursor.classList.add('pinching'); 
+                    if (isGameActive) {
+                        raycaster.setFromCamera(cursorPosition, camera);
+                        const intersects = raycaster.intersectObjects(cardGroup.children);
+                        if (intersects.length > 0) {
+                            pickCard(intersects[0].object);
+                        }
+                    }
+                } else if (!isPinchingNow) {
+                    cursor.classList.remove('pinching');
+                }
+                isPinching = isPinchingNow;
+            } else {
+                cursor.style.display = 'none';
+            }
+        }
+
+        function onResize() {
+            camera.aspect = window.innerWidth / window.innerHeight; 
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            repositionStoredCards();
+        }
+
+        function animate(time) {
+            requestAnimationFrame(animate); 
+            TWEEN.update(time);
+            updateExplosions(); 
+
+            if (isGameActive) {
+                let targetRotSpeed = 0.001; // Tốc độ mặc định khi đứng yên
+                
+                // ĐÃ CẬP NHẬT: Tăng tốc độ quay khi đưa tay sang 2 bên
+                if (handX < 0.4) targetRotSpeed = -0.035; // Bên trái (Nhanh hơn)
+                else if (handX > 0.6) targetRotSpeed = 0.035; // Bên phải (Nhanh hơn)
+                
+                rotationSpeed += (targetRotSpeed - rotationSpeed) * 0.05;
+                cardGroup.rotation.y += rotationSpeed;
+
+                cardGroup.children.forEach((c, i) => { 
+                    if(!c.userData.isPicked) c.position.y = Math.sin(time * 0.0015 + i) * 0.15; 
+                });
+            }
+
+            if(starFieldMesh) {
+                starFieldMesh.rotation.y = time * 0.00005;
+                starFieldMesh.material.size = Math.sin(time * 0.002) * 0.1 + 0.9;
+            }
+            renderer.render(scene, camera);
+        }
+
+        init(); animate();
+
+        const hands = new Hands({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`});
+        hands.setOptions({ maxNumHands: 1, modelComplexity: 1, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
+        hands.onResults(onResults);
+        
+        const videoElement = document.getElementById('input-video');
+        const cam = new Camera(videoElement, {
+            onFrame: async () => { await hands.send({image: videoElement}); },
+            width: 640, height: 480
+        });
+        cam.start();
+
+    </script>
+</body>
+</html>
